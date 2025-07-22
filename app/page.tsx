@@ -297,7 +297,7 @@ export default function AegisIRTSelfHealingAI() {
                   </div>
                   <div className="flex justify-center gap-6 pt-4 border-t">
                     <a
-                      href="https://www.linkedin.com/in/your-linkedin-profile"
+                      href="https://www.linkedin.com/in/k-v-s-karthikeya-2110a1309/"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 hover:text-blue-800 flex items-center gap-2"
@@ -305,13 +305,13 @@ export default function AegisIRTSelfHealingAI() {
                       <Linkedin className="h-5 w-5" /> LinkedIn
                     </a>
                     <a
-                      href="mailto:your.email@example.com"
+                      href="mailto:kvs.karthikeya009@gmail.com"
                       className="text-red-600 hover:text-red-800 flex items-center gap-2"
                     >
                       <Mail className="h-5 w-5" /> Email
                     </a>
                     <a
-                      href="https://github.com/your-github-profile"
+                      href="https://github.com/kvs-karthikeya"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-gray-800 hover:text-gray-900 flex items-center gap-2"
