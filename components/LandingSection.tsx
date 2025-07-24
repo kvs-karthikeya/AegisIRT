@@ -22,6 +22,14 @@ export default function LandingSection({ onEnter }: LandingSectionProps) {
           <p className="text-lg text-gray-700 leading-relaxed">
             The system learns from feedback, ensuring robust and intelligent automation for critical trial workflows.
           </p>
+          <a
+            href="https://www.linkedin.com/posts/k-v-s-karthikeya-2110a1309_aegisirt-ivrs-irt-activity-7344335077914341378-euU4?utm_source=share&utm_medium=member_desktop&rcm=ACoAAE6AQe0BBXNBmc8_nkr-JAShH0eegOmFa0I"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 underline hover:text-blue-800 transition"
+          >
+            Click for more info
+          </a>
           <Button
             onClick={onEnter}
             className="mt-8 px-8 py-4 text-lg font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-full shadow-lg hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 ease-in-out transform hover:scale-105"
