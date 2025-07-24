@@ -58,6 +58,7 @@ interface AIStats {
 }
 
 export default function AegisIRTSelfHealingAI() {
+  const [showApp, setShowApp] = useState(false)
   const [healingResults, setHealingResults] = useState<HealingResult[]>([])
   const [aiStats, setAIStats] = useState<AIStats | null>(null)
   const [supportedLanguages, setSupportedLanguages] = useState<any[]>([])
@@ -225,6 +226,7 @@ export default function AegisIRTSelfHealingAI() {
       {!showApp ? (
         <LandingSection onEnter={() => setShowApp(true)} />
       ) : (
+      <>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-lg shadow-sm border mb-6 p-6">
