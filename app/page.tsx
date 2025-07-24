@@ -647,7 +647,10 @@ export default function AegisIRTSelfHealingAI() {
           </div>
         )}
       </div>
-      <footer className="text-center text-gray-500 text-sm mt-8 pb-4">A K.V.S.K Production</footer>
-    </div>
-  )
+      <footer className="text-center text-gray-500 text-sm mt-8 pb-4">A K.V.S.K Production
+      </footer>
+    </>
+    )}
+  </div>
+)
 }
