@@ -1,5 +1,6 @@
 "use client"
 
+import LandingSection from "@/components/LandingSection"
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -221,6 +222,7 @@ export default function AegisIRTSelfHealingAI() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-100 p-4">
+      <LandingSection />
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-lg shadow-sm border mb-6 p-6">
