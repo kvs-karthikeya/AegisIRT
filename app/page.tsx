@@ -232,7 +232,7 @@ export default function AegisIRTSelfHealingAI() {
         <div className="bg-white rounded-lg shadow-sm border mb-6 p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-lg overflow-hidden border bg-white shadow-sm">
+              <div className="w-30 h-24 rounded-lg overflow-hidden bg-white shadow-sm">
              <img src="/aegislogo.jpg" alt="AegisIRT Logo" className="w-full h-full object-contain" />
               </div>
             </div>
