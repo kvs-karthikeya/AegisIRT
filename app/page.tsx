@@ -232,12 +232,8 @@ export default function AegisIRTSelfHealingAI() {
         <div className="bg-white rounded-lg shadow-sm border mb-6 p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="bg-gradient-to-r from-slate-700 to-blue-600 p-3 rounded-lg">
-                <Shield className="h-8 w-8 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">AegisIRT</h1>
-                <p className="text-gray-600">Multi-Language AI Self-Healing for Clinical Trial Systems</p>
+              <div className="w-14 h-14 rounded-lg overflow-hidden border bg-white shadow-sm">
+             <img src="/aegislogo.jpg" alt="AegisIRT Logo" className="w-full h-full object-contain" />
               </div>
             </div>
             <div className="flex items-center gap-4">
