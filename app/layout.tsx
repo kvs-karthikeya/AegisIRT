@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AegisIRT',
+  title: 'aegisIRT',
   description: 'Autonomous AI for Clinical Trial UI Testing',
   generator: 'v0.dev',
   icons: {
