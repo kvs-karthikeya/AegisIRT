@@ -1,26 +1,14 @@
 "use client"
 
-import LandingSection from "@/components/LandingSection"
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ThumbsUp, ThumbsDown, Edit3, Send, AlertCircle, CheckCircle, XCircle, Loader2, Shield } from "lucide-react"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Linkedin, Mail, Github } from "lucide-react"
+import { ThumbsUp, ThumbsDown, AlertCircle, CheckCircle, XCircle, Loader2, Shield, Code, BadgeCheck, Copy, Check } from "lucide-react"
 
+// Types
 interface HealingResult {
   id: string
   element_name: string
@@ -29,145 +17,132 @@ interface HealingResult {
     type: string
     value: string
     confidence: number
-    language_specific: {
-      language: string
-      framework: string
-      locator_method: string
-      code_snippet: string
-      imports: string[]
-    }
   }
-  clinical_analysis: { context: string; keywords_found: string[] }
+  reasoning: string
   recommendation: string
   timestamp: string
-  status: "pending" | "approved" | "rejected" | "corrected"
+  status: "pending" | "approved" | "rejected" | "corrected" | "verified"
+  screenshot?: string
   model_info: {
     language: string
-    framework: string
   }
-}
-
-interface AIStats {
-  server_status: string
-  model_loaded: boolean
-  total_predictions: number
-  final_accuracy?: number
-  parameters?: number
-  supported_languages?: string[]
-  multi_language_support?: boolean
+  verifiedResult?: boolean
 }
 
 export default function AegisIRTSelfHealingAI() {
-  const [showApp, setShowApp] = useState(false)
   const [healingResults, setHealingResults] = useState<HealingResult[]>([])
-  const [aiStats, setAIStats] = useState<AIStats | null>(null)
-  const [supportedLanguages, setSupportedLanguages] = useState<any[]>([])
   const [isHealing, setIsHealing] = useState(false)
-  const [correctionMode, setCorrectionMode] = useState(false)
-  const [selectedResult, setSelectedResult] = useState<HealingResult | null>(null)
-  const [correctedType, setCorrectedType] = useState("")
-  const [correctedValue, setCorrectedValue] = useState("")
-
-  // Form state
-  const [elementInfo, setElementInfo] = useState({
-    id: "",
-    name: "",
-    class: "",
-    text_hint: "",
-    tag_name: "button",
-    locator_type: "By.ID",
-    locator_value: "",
-  })
+  
+  // Phase 1: Smart input code paste and HTML content
+  const [pastedCode, setPastedCode] = useState("")
   const [htmlContent, setHtmlContent] = useState("")
-  const [clinicalContext, setClinicalContext] = useState("")
-  const [selectedLanguage, setSelectedLanguage] = useState("java")
+  
+  // Auto-populated internal state
+  const [parsedInfo, setParsedInfo] = useState({
+    locator_type: "",
+    locator_value: "",
+    tag_name: "",
+    text_hint: "",
+    detected_language: ""
+  })
+  
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+  
+  // Parser function that reads pasted Selenium or Playwright test code
   useEffect(() => {
-    loadAIStats()
-    loadSupportedLanguages()
-  }, [])
-
-  const loadAIStats = async () => {
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "get_stats" }),
-      })
-      const stats = await response.json()
-      setAIStats(stats)
-    } catch (error) {
-      setAIStats({
-        server_status: "offline",
-        model_loaded: false,
-        total_predictions: 0,
-      })
+    if (!pastedCode) {
+      setParsedInfo({ locator_type: "", locator_value: "", tag_name: "", text_hint: "", detected_language: "" })
+      return
     }
-  }
 
-  const loadSupportedLanguages = async () => {
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "get_supported_languages" }),
-      })
-      const data = await response.json()
-      setSupportedLanguages(data.languages || [])
-    } catch (error) {
-      console.error("Failed to load supported languages")
+    let locator_type = "Unknown"
+    let locator_value = ""
+    let tag_name = "button"
+    let text_hint = ""
+    let detected_language = "typescript"
+
+    const code = pastedCode
+
+    // Extract Locator Type
+    if (code.includes("By.id") || code.includes("#")) locator_type = "By.ID"
+    else if (code.includes("By.xpath") || code.includes("//")) locator_type = "By.XPATH"
+    else if (code.includes("By.className") || code.includes("By.cssSelector")) locator_type = "By.CSS_SELECTOR"
+    else if (code.includes("getByTestId") || code.includes("data-testid")) locator_type = "By.CSS_SELECTOR"
+
+    // Extract Locator Value
+    const stringMatch = code.match(/["'](.*?)["']/)
+    if (stringMatch) {
+      locator_value = stringMatch[1]
+    } else {
+      locator_value = code.trim()
     }
-  }
+
+    // Extract Language
+    if (code.includes("public void") || code.includes("WebElement")) {
+      detected_language = "java"
+    } else if (code.includes("def ") || code.includes("driver.find_element")) {
+      detected_language = "python"
+    } else if (code.includes("IWebElement") || code.includes("var ") || code.includes("using OpenQA")) {
+      detected_language = "csharp"
+    } else {
+      detected_language = "typescript"
+    }
+
+    // Extract Text Hint based on Context Words
+    const lowerCode = code.toLowerCase()
+    if (lowerCode.includes("enroll")) text_hint = "Enroll Patient"
+    else if (lowerCode.includes("randomize")) text_hint = "Randomize Subject"
+    else if (lowerCode.includes("dispense")) text_hint = "Dispense Medication"
+    else text_hint = locator_value || "Unknown Text"
+
+    setParsedInfo({ locator_type, locator_value, tag_name, text_hint, detected_language })
+  }, [pastedCode])
 
   const healElement = async () => {
-    if (!elementInfo.text_hint || !htmlContent) {
-      alert("Please provide element text hint and HTML content")
+    if (!parsedInfo.locator_value || !htmlContent) {
+      alert("Please provide the broken test code and HTML content")
       return
     }
 
     setIsHealing(true)
     try {
+      // Set clinical context dynamically based on text hint
+      let clinical_context = "general_irt"
+      if (parsedInfo.text_hint === "Enroll Patient") clinical_context = "patient_enrollment"
+      else if (parsedInfo.text_hint === "Randomize Subject") clinical_context = "randomization"
+      else if (parsedInfo.text_hint === "Dispense Medication") clinical_context = "drug_dispensing"
+
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "heal_element",
-          element_info: elementInfo,
+          element_info: parsedInfo,
           html_content: htmlContent,
-          clinical_context: clinicalContext,
-          language: selectedLanguage,
+          clinical_context: clinical_context
         }),
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.details || "Healing failed")
+        throw new Error("Healing failed")
       }
 
       const result = await response.json()
-
-      const healingResult: HealingResult = {
-        id: `healing_${Date.now()}`,
-        element_name: result.element_name,
-        original_locator: result.original_locator,
-        ai_suggestion: result.ai_suggestion,
-        clinical_analysis: result.clinical_analysis,
-        recommendation: result.recommendation,
-        timestamp: result.timestamp,
-        status: "pending",
-        model_info: result.model_info,
-      }
-
-      setHealingResults((prev) => [healingResult, ...prev])
-      loadAIStats()
+      setHealingResults((prev) => [result, ...prev])
     } catch (error) {
-      alert(`AegisIRT Healing Failed: ${error instanceof Error ? error.message : "Unknown error"}`)
+      alert(`Healing Failed: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
       setIsHealing(false)
     }
   }
 
-  const provideFeedback = async (resultId: string, feedbackType: "approve" | "reject" | "correct") => {
+  const provideFeedback = async (resultId: string, feedbackType: "approve" | "reject") => {
     try {
       const healingIndex = healingResults.findIndex((r) => r.id === resultId)
       if (healingIndex === -1) return
@@ -179,320 +154,111 @@ export default function AegisIRTSelfHealingAI() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "provide_feedback",
-          healing_id: healingIndex,
-          actual_success: feedbackType === "approve" || feedbackType === "correct",
-          language: result.model_info.language,
+          actual_success: feedbackType === "approve",
+          result: result
         }),
       })
 
       setHealingResults((prev) =>
-        prev.map((result) =>
-          result.id === resultId
-            ? {
-                ...result,
-                status: feedbackType === "correct" ? "corrected" : feedbackType === "approve" ? "approved" : "rejected",
-              }
-            : result,
-        ),
+        prev.map((r) =>
+          r.id === resultId ? { ...r, status: feedbackType === "approve" ? "approved" : "rejected" } : r
+        )
       )
-
-      loadAIStats()
     } catch (error) {
       alert("Failed to provide feedback")
     }
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    alert("Code copied to clipboard!")
-  }
-
-  const startCorrection = (result: HealingResult) => {
-    setSelectedResult(result)
-    setCorrectionMode(true)
-    setCorrectedType(result.ai_suggestion.type)
-    setCorrectedValue(result.ai_suggestion.value)
-  }
-
-  const submitCorrection = () => {
-    if (!selectedResult || !correctedValue) return
-    provideFeedback(selectedResult.id, "correct")
-    setCorrectionMode(false)
-    setSelectedResult(null)
-  }
-
+  // Pure dark styling applied explicitly
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-100 p-4">
-      {!showApp ? (
-        <LandingSection onEnter={() => setShowApp(true)} />
-      ) : (
-      <>
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-[#080808] text-white p-4 font-sans">
+      <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="bg-white rounded-lg shadow-sm border mb-6 p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-30 h-24 rounded-lg overflow-hidden bg-white shadow-sm">
-             <img src="/aegislogo.jpg" alt="AegisIRT Logo" className="w-full h-full object-contain" />
-              </div>
+        <div className="bg-[#0e0e0e] rounded-lg border border-[#1e1e1e] p-6 flex flex-col md:flex-row items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="border border-white p-3 rounded-lg flex items-center justify-center">
+              <Shield className="h-8 w-8 text-white" />
             </div>
-            <div className="flex items-center gap-4">
-              {aiStats && (
-                <>
-                  <div className="text-right">
-                    <p className="text-sm text-gray-600">AegisIRT Status</p>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-2 h-2 rounded-full ${aiStats.server_status === "online" ? "bg-green-500" : "bg-red-500"}`}
-                      />
-                      <p className="text-sm font-semibold">
-                        {aiStats.server_status === "online" ? "Neural Network Online" : "AI Offline"}
-                      </p>
-                    </div>
-                  </div>
-                  {aiStats.final_accuracy && (
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">Model Accuracy</p>
-                      <p className="text-xl font-bold text-green-600">{(aiStats.final_accuracy * 100).toFixed(1)}%</p>
-                    </div>
-                  )}
-                  {aiStats.multi_language_support && (
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">Languages</p>
-                      <p className="text-sm font-semibold">{supportedLanguages.length} Supported</p>
-                    </div>
-                  )}
-                </>
-              )}
-              {/* About Me Button and Dialog */}
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="ml-4 bg-transparent">
-                    About Me
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[600px]">
-                  <DialogHeader>
-                    <DialogTitle>About K.V.S.K</DialogTitle>
-                    <DialogDescription>
-                      My academic journey is centered around the powerful intersection of biotechnology, computer
-                      science, and artificial intelligence, with a strong belief in their potential to transform the
-                      life sciences.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="py-4 text-gray-700 text-sm leading-relaxed">
-                    <p className="mb-2">
-                      {
-                        "I’m a highly motivated sophomore pursuing a B.Tech. in Biotechnology (Hons.) with a specialization in Bioinformatics at KL University, complemented by a Minor in CSE and Advanced Technologies from IIT Mandi. My academic journey is centered around the powerful intersection of biotechnology, computer science, and artificial intelligence, with a strong belief in their potential to transform the life sciences."
-                      }
-                    </p>
-                    <p className="mb-2">
-                      {
-                        "My passion extends beyond the classroom—I’ve led and contributed to impactful initiatives such as “My Critters” and “smart.bucks,” participated in national-level hackathons and ideathons, and served as a lead in the Vachas Club, where I refined my skills in team-building, communication, and project execution."
-                      }
-                    </p>
-                    <p>
-                      {
-                        "I’m currently focused on developing expertise in SAS, Clinical Data Management, Data Science, Statistical Programming, and AI/ML. With a growth mindset and entrepreneurial spirit, I’m committed to driving innovation that bridges science and technology to solve real-world challenges.Let’s connect and build something meaningful together!"
-                      }
-                    </p>
-                  </div>
-                  <div className="flex justify-center gap-6 pt-4 border-t">
-                    <a
-                      href="https://www.linkedin.com/in/k-v-s-karthikeya-2110a1309/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-800 flex items-center gap-2"
-                    >
-                      <Linkedin className="h-5 w-5" /> LinkedIn
-                    </a>
-                    <a
-                      href="kvs.karthikeya009@gmail.com"
-                      className="text-red-600 hover:text-red-800 flex items-center gap-2"
-                    >
-                      <Mail className="h-5 w-5" /> Email
-                    </a>
-                    <a
-                      href="https://github.com/kvs-karthikeya"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-gray-800 hover:text-gray-900 flex items-center gap-2"
-                    >
-                      <Github className="h-5 w-5" /> GitHub
-                    </a>
-                  </div>
-                </DialogContent>
-              </Dialog>
+            <div>
+              <h1 className="text-2xl font-bold text-white tracking-widest uppercase">AegisIRT</h1>
+              <p className="text-[#555] tracking-wide">AI Self-Healing for Clinical Trial Systems</p>
             </div>
           </div>
         </div>
 
-        {/* Language Support Alert */}
-        {/* AI Status Alert */}
-        {aiStats && aiStats.server_status !== "online" && (
-          <Alert className="mb-6 border-red-200 bg-red-50">
-            <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-800">
-              AegisIRT AI model is offline or failed to load. Check console for errors.
-            </AlertDescription>
-          </Alert>
-        )}
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          {/* Element Input */}
-          <Card>
+          {/* Code Paste Section */}
+          <Card className="bg-[#0e0e0e] border-[#1e1e1e] text-white">
             <CardHeader>
-              <CardTitle>Broken IRT Element</CardTitle>
-              <CardDescription>
-                Provide details about the broken clinical trial element for AegisIRT to heal
+              <CardTitle className="text-white flex items-center gap-2"><Code className="w-5 h-5"/> Paste Broken Locator Code</CardTitle>
+              <CardDescription className="text-[#555]">
+                Paste your Selenium or Playwright test code. We auto-extract locator bindings and context.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="clinical-context">Clinical Context</Label>
-                  <Select value={clinicalContext} onValueChange={setClinicalContext}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select context" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="patient_enrollment">Patient Enrollment</SelectItem>
-                      <SelectItem value="randomization">Randomization</SelectItem>
-                      <SelectItem value="drug_dispensing">Drug Dispensing</SelectItem>
-                      <SelectItem value="adverse_events">Adverse Events</SelectItem>
-                      <SelectItem value="visit_management">Visit Management</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <Textarea
+                value={pastedCode}
+                onChange={(e) => setPastedCode(e.target.value)}
+                placeholder={'Example: await page.locator("getByTestId(\'btn_enroll\')").click();'}
+                className="min-h-[150px] font-mono text-sm bg-[#111] border-[#1e1e1e] text-white focus:border-white focus:ring-1 focus:ring-white transition-all"
+              />
+              
+              {/* Auto-populated badges */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2">
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Type</span>
+                  <span className="text-sm font-semibold">{parsedInfo.locator_type || "—"}</span>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="element-id">Element ID</Label>
-                  <Input
-                    id="element-id"
-                    value={elementInfo.id}
-                    onChange={(e) => setElementInfo({ ...elementInfo, id: e.target.value })}
-                    placeholder="btn_enroll_patient"
-                  />
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded truncate">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Value</span>
+                  <span className="text-sm font-semibold truncate" title={parsedInfo.locator_value}>{parsedInfo.locator_value || "—"}</span>
                 </div>
-                <div>
-                  <Label htmlFor="element-name">Element Name</Label>
-                  <Input
-                    id="element-name"
-                    value={elementInfo.name}
-                    onChange={(e) => setElementInfo({ ...elementInfo, name: e.target.value })}
-                    placeholder="enroll_patient"
-                  />
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Language</span>
+                  <span className="text-sm font-semibold">{parsedInfo.detected_language || "—"}</span>
                 </div>
-              </div>
-
-              <div>
-                <Label htmlFor="element-class">Element Class</Label>
-                <Input
-                  id="element-class"
-                  value={elementInfo.class}
-                  onChange={(e) => setElementInfo({ ...elementInfo, class: e.target.value })}
-                  placeholder="btn btn-primary enrollment-btn"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="text-hint">Text Hint (Required)</Label>
-                <Input
-                  id="text-hint"
-                  value={elementInfo.text_hint}
-                  onChange={(e) => setElementInfo({ ...elementInfo, text_hint: e.target.value })}
-                  placeholder="Enroll Patient"
-                  className="border-blue-300"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="tag-name">Tag Name</Label>
-                  <Select
-                    value={elementInfo.tag_name}
-                    onValueChange={(value) => setElementInfo({ ...elementInfo, tag_name: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="button">button</SelectItem>
-                      <SelectItem value="input">input</SelectItem>
-                      <SelectItem value="select">select</SelectItem>
-                      <SelectItem value="div">div</SelectItem>
-                      <SelectItem value="span">span</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded truncate">
+                   <span className="text-xs text-[#555] uppercase tracking-wider">Hint</span>
+                  <span className="text-sm font-semibold truncate" title={parsedInfo.text_hint}>{parsedInfo.text_hint || "—"}</span>
                 </div>
-                <div>
-                  <Label htmlFor="locator-type">Broken Locator Type</Label>
-                  <Select
-                    value={elementInfo.locator_type}
-                    onValueChange={(value) => setElementInfo({ ...elementInfo, locator_type: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="By.ID">By.ID</SelectItem>
-                      <SelectItem value="By.NAME">By.NAME</SelectItem>
-                      <SelectItem value="By.CLASS_NAME">By.CLASS_NAME</SelectItem>
-                      <SelectItem value="By.XPATH">By.XPATH</SelectItem>
-                      <SelectItem value="By.CSS_SELECTOR">By.CSS_SELECTOR</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="locator-value">Broken Locator Value</Label>
-                <Input
-                  id="locator-value"
-                  value={elementInfo.locator_value}
-                  onChange={(e) => setElementInfo({ ...elementInfo, locator_value: e.target.value })}
-                  placeholder="btn_enroll_patient"
-                />
               </div>
             </CardContent>
           </Card>
 
           {/* HTML Content */}
-          <Card>
+          <Card className="bg-[#0e0e0e] border-[#1e1e1e] text-white">
             <CardHeader>
-              <CardTitle>Current Page Content</CardTitle>
-              <CardDescription>Page content for AegisIRT neural network analysis</CardDescription>
+              <CardTitle className="text-white">Current Page DOM</CardTitle>
+              <CardDescription className="text-[#555]">Context DOM for AI analysis</CardDescription>
             </CardHeader>
             <CardContent>
               <Textarea
                 value={htmlContent}
                 onChange={(e) => setHtmlContent(e.target.value)}
-                placeholder="<div class='patient-enrollment'>&#10;  <button data-testid='enroll-patient-action'>Enroll Patient</button>&#10;</div>"
-                className="min-h-[300px] font-mono text-sm border-blue-300"
+                placeholder="<div id='app'>...</div>"
+                className="min-h-[210px] font-mono text-sm bg-[#111] border-[#1e1e1e] text-white focus:border-white focus:ring-1 focus:ring-white transition-all"
               />
             </CardContent>
           </Card>
         </div>
 
         {/* Heal Button */}
-        <div className="text-center mb-6">
+        <div className="flex justify-center mb-6">
           <Button
             onClick={healElement}
-            disabled={isHealing || !elementInfo.text_hint || !htmlContent}
+            disabled={isHealing || !parsedInfo.locator_value || !htmlContent}
             size="lg"
-            className="bg-gradient-to-r from-slate-700 to-blue-600 hover:from-slate-800 hover:to-blue-700"
+            className="bg-white text-black hover:bg-gray-200 border-2 border-white transition-all font-bold px-8 py-6 rounded-none tracking-widest uppercase disabled:opacity-50 disabled:bg-[#111] disabled:text-[#555] disabled:border-[#1e1e1e]"
           >
             {isHealing ? (
               <>
-                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                AegisIRT Healing...
+                <Loader2 className="h-5 w-5 mr-3 animate-spin" />
+                Processing Gemini Multi-modal Analysis...
               </>
             ) : (
               <>
-                <Shield className="h-5 w-5 mr-2" />
-                Heal with AegisIRT AI
+                <Shield className="h-5 w-5 mr-3" />
+                Initialize AI Healing Phase
               </>
             )}
           </Button>
@@ -500,85 +266,93 @@ export default function AegisIRTSelfHealingAI() {
 
         {/* Results */}
         {healingResults.length > 0 && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-bold">AegisIRT Multi-Language Healing Results</h2>
+          <div className="space-y-6">
+            <h2 className="text-xl font-bold uppercase tracking-wider border-b border-[#1e1e1e] pb-2">Verified Healing Vectors</h2>
             {healingResults.map((result) => (
-              <Card key={result.id} className="border-l-4 border-l-slate-500">
+              <Card key={result.id} className="bg-[#0e0e0e] border-[#1e1e1e] text-white">
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
+                    <CardTitle className="flex items-center gap-2 uppercase tracking-wider">
                       {result.status === "approved" ? (
-                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <CheckCircle className="h-5 w-5 text-white" />
                       ) : result.status === "rejected" ? (
-                        <XCircle className="h-5 w-5 text-red-600" />
-                      ) : result.status === "corrected" ? (
-                        <Edit3 className="h-5 w-5 text-blue-600" />
+                        <XCircle className="h-5 w-5 text-[#555]" />
                       ) : (
-                        <AlertCircle className="h-5 w-5 text-yellow-600" />
+                        <AlertCircle className="h-5 w-5 text-white" />
                       )}
                       {result.element_name}
                     </CardTitle>
+                    {result.status === "verified" || result.verifiedResult ? (
+                       <div className="flex items-center gap-2 bg-[#111] border border-white px-3 py-1 text-xs uppercase tracking-widest font-bold">
+                         <BadgeCheck className="w-4 h-4 text-white" /> Browser Verified
+                       </div>
+                    ) : null}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-6 bg-gradient-to-br from-red-50 to-red-100 rounded-xl border-2 border-red-200 shadow-sm">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                        <h4 className="font-bold text-red-800">❌ Broken Locator</h4>
-                      </div>
-                      <div className="bg-white p-3 rounded-lg border border-red-200">
-                        <p className="text-sm text-red-700 font-mono break-all">
-                          {result.original_locator.type} = "{result.original_locator.value}"
-                        </p>
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 bg-[#111] border border-[#1e1e1e]">
+                      <h4 className="font-bold text-[#555] uppercase text-xs tracking-wider mb-2">Original Broken Input</h4>
+                      <p className="text-sm text-white font-mono break-all">
+                        {result.original_locator.type} = "{result.original_locator.value}"
+                      </p>
                     </div>
 
-                    <div className="p-6 bg-gradient-to-br from-slate-50 to-blue-100 rounded-xl border-2 border-slate-200 shadow-sm">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-3 h-3 bg-slate-600 rounded-full"></div>
-                        <h4 className="font-bold text-slate-800">🛡️ AegisIRT Healed Locator</h4>
-                      </div>
-                      <div className="bg-white p-3 rounded-lg border border-slate-200">
-                        <p className="text-sm text-slate-700 font-mono break-all">
+                    <div className="p-4 bg-[#111] border border-white shadow-[0_0_15px_rgba(255,255,255,0.1)] relative group">
+                      <h4 className="font-bold text-white uppercase text-xs tracking-wider mb-2">Gemini Discovered & Verified Vector</h4>
+                      <div className="flex justify-between items-start gap-2">
+                        <p className="text-sm text-white font-mono break-all font-bold">
                           {result.ai_suggestion.type} = "{result.ai_suggestion.value}"
                         </p>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-6 w-6 text-[#555] hover:text-white hover:bg-[#1e1e1e]"
+                          onClick={() => copyToClipboard(result.ai_suggestion.value, result.id)}
+                          title="Copy Locator Value"
+                        >
+                          {copiedId === result.id ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-[#555] mt-2 italic">Reasoning: "{result.reasoning}"</p>
+                    </div>
+                  </div>
+
+                  {result.screenshot && (
+                     <div className="mt-4 border border-[#1e1e1e] p-2 bg-[#111]">
+                       <h4 className="font-bold text-[#555] uppercase text-xs tracking-wider mb-2">Browser Verification Render</h4>
+                       <img src={`data:image/png;base64,${result.screenshot}`} alt="Highlighted Element" className="w-full max-w-md border border-[#1e1e1e] filter grayscale contrast-125" />
+                     </div>
+                  )}
+
+                  <div className="flex border-t border-[#1e1e1e] pt-4 mt-6">
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-xs tracking-wider uppercase mb-2">Model Confidence</h4>
+                      <div className="flex items-center gap-3">
+                        <Progress value={result.ai_suggestion.confidence * 100} className="h-1 bg-[#111] flex-1">
+                          <div className="h-full bg-white transition-all" style={{ width: `${result.ai_suggestion.confidence * 100}%`}} />
+                        </Progress>
+                        <p className="text-xs font-mono">{(result.ai_suggestion.confidence * 100).toFixed(1)}%</p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Language-Specific Code */}
-
-                  <div>
-                    <h4 className="font-semibold mb-2">AegisIRT Neural Network Confidence</h4>
-                    <Progress value={result.ai_suggestion.confidence * 100} className="h-3" />
-                    <p className="text-sm font-semibold mt-1">{(result.ai_suggestion.confidence * 100).toFixed(1)}%</p>
-                  </div>
-
-                  {result.status === "pending" && (
-                    <div className="border-t pt-4">
-                      <h4 className="font-semibold mb-3">🧠 Train AegisIRT Neural Network</h4>
-                      <div className="flex gap-3">
-                        <Button
-                          onClick={() => provideFeedback(result.id, "approve")}
-                          className="bg-green-600 hover:bg-green-700 text-white"
-                        >
-                          <ThumbsUp className="h-4 w-4 mr-2" />
-                          AegisIRT Healed Correctly
-                        </Button>
-                        <Button onClick={() => provideFeedback(result.id, "reject")} variant="destructive">
-                          <ThumbsDown className="h-4 w-4 mr-2" />
-                          AegisIRT Healing Failed
-                        </Button>
-                        <Button
-                          onClick={() => startCorrection(result)}
-                          variant="outline"
-                          className="border-slate-500 text-slate-600 hover:bg-slate-50"
-                        >
-                          <Edit3 className="h-4 w-4 mr-2" />
-                          Correct & Train AegisIRT
-                        </Button>
-                      </div>
+                  {(result.status === "pending" || result.status === "verified") && (
+                    <div className="pt-4 flex gap-3">
+                      <Button
+                        onClick={() => provideFeedback(result.id, "approve")}
+                        className="bg-transparent text-white border border-white hover:bg-white hover:text-black transition-colors uppercase tracking-widest text-xs rounded-none h-10"
+                      >
+                        <ThumbsUp className="h-4 w-4 mr-2" />
+                        Approve Mapping
+                      </Button>
+                      <Button 
+                        onClick={() => provideFeedback(result.id, "reject")} 
+                        className="bg-transparent text-[#555] border border-[#1e1e1e] hover:bg-[#1e1e1e] hover:text-white transition-colors uppercase tracking-widest text-xs rounded-none h-10"
+                      >
+                        <ThumbsDown className="h-4 w-4 mr-2" />
+                        Reject
+                      </Button>
                     </div>
                   )}
                 </CardContent>
@@ -586,67 +360,7 @@ export default function AegisIRTSelfHealingAI() {
             ))}
           </div>
         )}
-
-        {/* Correction Modal */}
-        {correctionMode && selectedResult && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <Card className="w-full max-w-2xl">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Edit3 className="h-5 w-5" />
-                  Correct AegisIRT Healing & Train Neural Network
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="corrected-type">Correct Locator Type</Label>
-                    <Select value={correctedType} onValueChange={setCorrectedType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="By.ID">By.ID</SelectItem>
-                        <SelectItem value="By.NAME">By.NAME</SelectItem>
-                        <SelectItem value="By.CLASS_NAME">By.CLASS_NAME</SelectItem>
-                        <SelectItem value="By.XPATH">By.XPATH</SelectItem>
-                        <SelectItem value="By.CSS_SELECTOR">By.CSS_SELECTOR</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="corrected-value">Correct Locator Value</Label>
-                    <Input
-                      id="corrected-value"
-                      value={correctedValue}
-                      onChange={(e) => setCorrectedValue(e.target.value)}
-                      placeholder="Enter correct locator value"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3 justify-end">
-                  <Button variant="outline" onClick={() => setCorrectionMode(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={submitCorrection}
-                    className="bg-slate-600 hover:bg-slate-700"
-                    disabled={!correctedValue}
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Train AegisIRT Neural Network
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
       </div>
-      <footer className="text-center text-gray-500 text-sm mt-8 pb-4">A K.V.S.K Production
-      </footer>
-    </>
-    )}
-  </div>
-)
+    </div>
+  )
 }
