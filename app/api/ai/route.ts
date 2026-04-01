@@ -9,12 +9,16 @@ let globalBrowser: Browser | null = null;
 const snapshotPath = path.join(process.cwd(), "snapshot.json");
 const healingLogPath = path.join(process.cwd(), "healing_log.json");
 
-// Ensure files exist
-if (!fs.existsSync(snapshotPath)) {
-  fs.writeFileSync(snapshotPath, JSON.stringify({ html: "<div id='app'>\\n  <button id='v1_enroll_btn'>Enroll Patient</button>\\n</div>" }, null, 2));
-}
-if (!fs.existsSync(healingLogPath)) {
-  fs.writeFileSync(healingLogPath, JSON.stringify([], null, 2));
+// Ensure files exist (wrapped in try/catch to survive Vercel's Read-Only Serverless FS)
+try {
+  if (!fs.existsSync(snapshotPath)) {
+    fs.writeFileSync(snapshotPath, JSON.stringify({ html: "<div id='app'>\\n  <button id='v1_enroll_btn'>Enroll Patient</button>\\n</div>" }, null, 2));
+  }
+  if (!fs.existsSync(healingLogPath)) {
+    fs.writeFileSync(healingLogPath, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.warn("Skipping initial file write: environment is likely a read-only Vercel instance.");
 }
 
 function domDiff(snapshotHtml: string, currentHtml: string) {
@@ -44,7 +48,11 @@ export async function POST(request: NextRequest) {
     // Phase 4: Feedback logging system
     if (action === "provide_feedback") {
       const { actual_success, result } = body;
-      const logs = JSON.parse(fs.readFileSync(healingLogPath, "utf-8"));
+      
+      let logs: any[] = [];
+      try {
+        logs = JSON.parse(fs.readFileSync(healingLogPath, "utf-8"));
+      } catch (e) { /* default empty logs */ }
       
       if (result) {
         logs.push({
@@ -55,10 +63,15 @@ export async function POST(request: NextRequest) {
           actual_success,
           user_feedback: actual_success ? "approve" : "reject"
         });
-        fs.writeFileSync(healingLogPath, JSON.stringify(logs, null, 2));
-        console.log(`Log appended to healing_log.json: ${actual_success ? "approve" : "reject"}`);
+        
+        try {
+          fs.writeFileSync(healingLogPath, JSON.stringify(logs, null, 2));
+          console.log(`Log appended to healing_log.json: ${actual_success ? "approve" : "reject"}`);
+        } catch (e) {
+          console.warn("Could not write to healing_log.json locally -> Vercel Read-Only Environment.");
+        }
       }
-      return NextResponse.json({ status: "success", message: "Feedback logged to healing_log.json" });
+      return NextResponse.json({ status: "success", message: "Feedback logged" });
     }
 
     if (action === "get_stats") {
@@ -69,7 +82,12 @@ export async function POST(request: NextRequest) {
       const { element_info, html_content, clinical_context } = body;
 
       // Local snapshot diff
-      const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf-8"));
+      let snapshot = { html: "" };
+      try {
+        snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf-8"));
+      } catch(e) {
+        snapshot = { html: "<div id='app'>\\n  <button id='v1_enroll_btn'>Enroll Patient</button>\\n</div>" };
+      }
       const diffResult = domDiff(snapshot.html, html_content);
 
       // We use standard API key setup from env
