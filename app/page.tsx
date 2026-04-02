@@ -207,23 +207,23 @@ export default function AegisIRTSelfHealingAI() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">1</span>
-                <h3 className="text-white font-semibold text-sm tracking-wide">Paste Code</h3>
-                <p className="text-[#555] text-sm leading-relaxed">Paste your broken Selenium or Playwright test code into the input panel.</p>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Paste Broken Code</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Paste your broken Selenium or Playwright test code into the first panel. Language and type are auto-detected.</p>
               </div>
               <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">2</span>
-                <h3 className="text-white font-semibold text-sm tracking-wide">Select Context</h3>
-                <p className="text-[#555] text-sm leading-relaxed">Select your clinical context and output language.</p>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Paste Page DOM</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Paste the HTML structure (DOM) of the page into the second panel. Clinical context is automatically extracted.</p>
               </div>
               <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">3</span>
-                <h3 className="text-white font-semibold text-sm tracking-wide">Heal Vector</h3>
-                <p className="text-[#555] text-sm leading-relaxed">Click Heal — Gemini analyzes your DOM and suggests a fix which Puppeteer then verifies in a real browser.</p>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Initialize AI Healing</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Click to test. Gemini analyzes the DOM for a fix, which Puppeteer then verifies in a headless browser.</p>
               </div>
               <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">4</span>
                 <h3 className="text-white font-semibold text-sm tracking-wide">Verify & Train</h3>
-                <p className="text-[#555] text-sm leading-relaxed">Approve or reject the result to train the model for future heals.</p>
+                <p className="text-[#555] text-sm leading-relaxed">Approve or reject the suggested fix. Your feedback trains the model to act smarter on future heals.</p>
               </div>
             </div>
           </div>
