@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ThumbsUp, ThumbsDown, AlertCircle, CheckCircle, XCircle, Loader2, Shield, Code, BadgeCheck, Copy, Check } from "lucide-react"
+import { ThumbsUp, ThumbsDown, AlertCircle, CheckCircle, XCircle, Loader2, Shield, Code, BadgeCheck, Copy, Check, ChevronDown, ChevronUp } from "lucide-react"
+import LandingSection from "@/components/LandingSection"
 
 // Types
 interface HealingResult {
@@ -32,6 +33,8 @@ interface HealingResult {
 export default function AegisIRTSelfHealingAI() {
   const [healingResults, setHealingResults] = useState<HealingResult[]>([])
   const [isHealing, setIsHealing] = useState(false)
+  const [showLanding, setShowLanding] = useState(true)
+  const [isHowToUseOpen, setIsHowToUseOpen] = useState(false)
   
   // Phase 1: Smart input code paste and HTML content
   const [pastedCode, setPastedCode] = useState("")
@@ -170,8 +173,12 @@ export default function AegisIRTSelfHealingAI() {
   }
 
   // Pure dark styling applied explicitly
+  if (showLanding) {
+    return <LandingSection onEnter={() => setShowLanding(false)} />
+  }
+
   return (
-    <div className="min-h-screen bg-[#080808] text-white p-4 font-sans">
+    <div className="min-h-screen bg-[#080808] text-white p-4 font-sans" style={{ fontFamily: '"Open Sans", sans-serif' }}>
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="bg-[#0e0e0e] rounded-lg border border-[#1e1e1e] p-6 flex flex-col md:flex-row items-center justify-between">
@@ -182,6 +189,42 @@ export default function AegisIRTSelfHealingAI() {
             <div>
               <h1 className="text-2xl font-bold text-white tracking-widest uppercase">AegisIRT</h1>
               <p className="text-[#555] tracking-wide">AI Self-Healing for Clinical Trial Systems</p>
+            </div>
+          </div>
+        </div>
+
+        {/* How to use panel */}
+        <div className="bg-[#0e0e0e] rounded-lg border border-[#1e1e1e] overflow-hidden font-sans transition-all duration-300">
+          <button 
+            className="w-full flex items-center justify-between p-3 bg-[#0e0e0e] hover:bg-[#111] transition-colors"
+            onClick={() => setIsHowToUseOpen(!isHowToUseOpen)}
+          >
+            <span className="text-white text-sm font-semibold tracking-wide flex items-center gap-2">How to use AegisIRT</span>
+            {isHowToUseOpen ? <ChevronUp className="w-4 h-4 text-white" /> : <ChevronDown className="w-4 h-4 text-white" />}
+          </button>
+          
+          <div className={`transition-all duration-300 ease-in-out ${isHowToUseOpen ? 'max-h-[500px] opacity-100 p-6 pt-4 border-t border-[#1e1e1e]' : 'max-h-0 opacity-0 overflow-hidden'}`}>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">1</span>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Paste Code</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Paste your broken Selenium or Playwright test code into the input panel.</p>
+              </div>
+              <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">2</span>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Select Context</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Select your clinical context and output language.</p>
+              </div>
+              <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">3</span>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Heal Vector</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Click Heal — Gemini analyzes your DOM and suggests a fix which Puppeteer then verifies in a real browser.</p>
+              </div>
+              <div className="space-y-3 border-l-2 border-[#1e1e1e] pl-4">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-black text-xs font-bold">4</span>
+                <h3 className="text-white font-semibold text-sm tracking-wide">Verify & Train</h3>
+                <p className="text-[#555] text-sm leading-relaxed">Approve or reject the result to train the model for future heals.</p>
+              </div>
             </div>
           </div>
         </div>
