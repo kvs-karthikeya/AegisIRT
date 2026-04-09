@@ -2,9 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
 import path from "path";
-import puppeteer, { Browser } from "puppeteer";
+import { JSDOM } from "jsdom";
 
-let globalBrowser: Browser | null = null;
 const snapshotPath = path.join(process.cwd(), "snapshot.json");
 const healingLogPath = path.join(process.cwd(), "healing_log.json");
 
@@ -13,16 +12,50 @@ try {
   if (!fs.existsSync(healingLogPath)) fs.writeFileSync(healingLogPath, JSON.stringify([], null, 2));
 } catch (e) { console.warn("Skipping file write: read-only environment."); }
 
+// ── Heal status enum ──────────────────────────────────────────────────────────
+// HEALED     = Gemini found a selector AND jsdom confirmed it exists in DOM
+// FALLBACK   = Gemini found a selector, jsdom could not confirm (env issue), but HTML text check passed
+// FAILED     = Gemini could not find any valid selector after 3 attempts
+type HealStatus = "HEALED" | "FALLBACK" | "FAILED";
+
+// ── DOM diff ──────────────────────────────────────────────────────────────────
 function domDiff(snapshotHtml: string, currentHtml: string): string {
   const diffs: string[] = [];
   try {
-    const snapIds = (snapshotHtml.match(/id=['\"](.*?)['"]/g) || []).map(s => s.replace(/id=|['"]/g, ""));
-    const curIds  = (currentHtml.match(/id=['\"](.*?)['"]/g) || []).map(s => s.replace(/id=|['"]/g, ""));
+    const snapIds = (snapshotHtml.match(/id=['"](.*?)['"]/g) || []).map(s => s.replace(/id=|['"]/g, ""));
+    const curIds  = (currentHtml.match(/id=['"](.*?)['"]/g) || []).map(s => s.replace(/id=|['"]/g, ""));
     snapIds.forEach(id => { if (!curIds.includes(id)) diffs.push(`ID '${id}' was removed or renamed.`); });
   } catch {}
   return diffs.length > 0 ? diffs.join(" ") : "No structural ID changes detected.";
 }
 
+// ── jsdom verification ────────────────────────────────────────────────────────
+function verifyWithJsdom(html: string, selectorValue: string, selectorType: string): boolean {
+  try {
+    const dom = new JSDOM(html);
+    const document = dom.window.document;
+    const isXPath = selectorType.includes("XPATH");
+
+    if (isXPath) {
+      const result = document.evaluate(
+        selectorValue, document, null,
+        dom.window.XPathResult.FIRST_ORDERED_NODE_TYPE, null
+      );
+      const found = result.singleNodeValue !== null;
+      console.log(`[AegisIRT] jsdom XPath "${selectorValue}": ${found ? "FOUND" : "NULL"}`);
+      return found;
+    } else {
+      const el = document.querySelector(selectorValue);
+      console.log(`[AegisIRT] jsdom querySelector "${selectorValue}": ${el ? "FOUND" : "NULL"}`);
+      return el !== null;
+    }
+  } catch (e) {
+    console.warn(`[AegisIRT] jsdom error for "${selectorValue}":`, e);
+    return false;
+  }
+}
+
+// ── HTML chunking ─────────────────────────────────────────────────────────────
 const MODULE_KEYWORDS: Record<string, string[]> = {
   "authentication":            ["login", "username", "password", "mfa", "coordinator"],
   "patient-search":            ["patient_search", "search_input", "search_btn", "patient_id"],
@@ -44,18 +77,27 @@ function getRelevantHtmlChunk(html: string, contextClue: string): string {
       const start = html.lastIndexOf("<", idx);
       let depth = 0, end = start;
       for (let i = start; i < html.length; i++) {
-        if (html[i] === "<" && html[i+1] !== "/") depth++;
-        if (html[i] === "<" && html[i+1] === "/") depth--;
-        if (depth === 0 && i > start) { end = i; while (end < html.length && html[end] !== ">") end++; end++; break; }
+        if (html[i] === "<" && html[i + 1] !== "/") depth++;
+        if (html[i] === "<" && html[i + 1] === "/") depth--;
+        if (depth === 0 && i > start) {
+          end = i;
+          while (end < html.length && html[end] !== ">") end++;
+          end++;
+          break;
+        }
       }
       const chunk = html.slice(start, end);
-      if (chunk.length > 50) { console.log(`[AegisIRT] Chunk: ${module} (${chunk.length} chars)`); return chunk; }
+      if (chunk.length > 50) {
+        console.log(`[AegisIRT] Chunk: ${module} (${chunk.length} chars)`);
+        return chunk;
+      }
     }
   }
-  console.warn(`[AegisIRT] No chunk for "${contextClue}" — full HTML (${html.length} chars)`);
+  console.warn(`[AegisIRT] No chunk matched for "${contextClue}" — using full HTML (${html.length} chars)`);
   return html;
 }
 
+// ── Locator extraction ────────────────────────────────────────────────────────
 interface ParsedLocator {
   lineIndex: number; originalLine: string; locator_type: string;
   locator_value: string; text_hint: string; detected_language: string; context_clue: string;
@@ -64,6 +106,7 @@ interface ParsedLocator {
 function extractAllLocators(code: string): ParsedLocator[] {
   const lines = code.split("\n");
   const results: ParsedLocator[] = [];
+
   let detected_language = "python";
   if (code.includes("WebElement") || code.includes("driver.findElement")) detected_language = "java";
   else if (code.includes("IWebElement") || code.includes("driver.FindElement")) detected_language = "csharp";
@@ -86,8 +129,9 @@ function extractAllLocators(code: string): ParsedLocator[] {
       if (!match) continue;
 
       let locator_type = "By.CSS_SELECTOR", locator_value = "";
-      if (lang === "python" || lang === "java" || lang === "csharp") {
-        locator_type = `By.${match[1].toUpperCase()}`; locator_value = match[2];
+      if (lang !== "typescript") {
+        locator_type = `By.${match[1].toUpperCase()}`;
+        locator_value = match[2];
       } else {
         locator_value = match[1];
       }
@@ -107,51 +151,68 @@ function extractAllLocators(code: string): ParsedLocator[] {
       else if (lower.includes("unblind") || lower.includes("emergency")) text_hint = "Emergency Unblinding";
       else if (lower.includes("audit") || lower.includes("report")) text_hint = "Audit Report";
       else if (lower.includes("amendment") || lower.includes("acknowledge")) text_hint = "Protocol Amendment";
+      else if (lower.includes("nav") || lower.includes("navigation")) text_hint = "Navigation";
 
       results.push({ lineIndex, originalLine: line, locator_type, locator_value, text_hint, detected_language, context_clue });
       break;
     }
   });
+
   return results;
 }
 
-function reconstructFile(originalCode: string, healedMap: Map<number, { type: string; value: string; healed: boolean }>): string {
+// ── Reconstruct healed file ───────────────────────────────────────────────────
+function reconstructFile(
+  originalCode: string,
+  healedMap: Map<number, { type: string; value: string; status: HealStatus }>
+): string {
   const lines = originalCode.split("\n");
   const output: string[] = [];
+
   lines.forEach((line, idx) => {
     const heal = healedMap.get(idx);
-    if (heal) {
-      if (heal.healed) {
-        let newLine = line;
-        newLine = newLine.replace(/find_element\(\s*By\.\w+\s*,\s*["'`].*?["'`]\s*\)/, `find_element(By.CSS_SELECTOR, "${heal.value}")`);
-        newLine = newLine.replace(/findElement\(\s*By\.\w+\(\s*["'`].*?["'`]\s*\)\s*\)/, `findElement(By.cssSelector("${heal.value}"))`);
-        newLine = newLine.replace(/FindElement\(\s*By\.\w+\(\s*["'`].*?["'`]\s*\)\s*\)/, `FindElement(By.CssSelector("${heal.value}"))`);
-        newLine = newLine.replace(/\.locator\(\s*["'`].*?["'`]\s*\)/, `.locator("${heal.value}")`);
-        output.push(newLine);
-      } else {
-        output.push(`    # AEGISIRT COULD NOT HEAL: ${heal.type} = '${heal.value}'`);
-        output.push(line);
+    if (!heal) { output.push(line); return; }
+
+    if (heal.status === "HEALED" || heal.status === "FALLBACK") {
+      let newLine = line;
+      const q = `"${heal.value}"`;
+      newLine = newLine.replace(/find_element\(\s*By\.\w+\s*,\s*["'`].*?["'`]\s*\)/, `find_element(By.CSS_SELECTOR, ${q})`);
+      newLine = newLine.replace(/findElement\(\s*By\.\w+\(\s*["'`].*?["'`]\s*\)\s*\)/, `findElement(By.cssSelector(${q}))`);
+      newLine = newLine.replace(/FindElement\(\s*By\.\w+\(\s*["'`].*?["'`]\s*\)\s*\)/, `FindElement(By.CssSelector(${q}))`);
+      newLine = newLine.replace(/\.locator\(\s*["'`].*?["'`]\s*\)/, `.locator(${q})`);
+      if (heal.status === "FALLBACK") {
+        output.push(`    # AEGISIRT FALLBACK — jsdom could not confirm but HTML check passed`);
       }
+      output.push(newLine);
     } else {
+      output.push(`    # AEGISIRT FAILED — no valid selector found after 3 attempts`);
       output.push(line);
     }
   });
+
   return output.join("\n");
 }
 
+// ── Core heal function ────────────────────────────────────────────────────────
 async function healSingleLocator(
-  locator: ParsedLocator, html_content: string, diffResult: string,
-  ai: GoogleGenAI, browser: Browser | null
-): Promise<{ type: string; value: string; confidence: number; reasoning: string; healed: boolean; screenshot: string; verified: boolean }> {
-
+  locator: ParsedLocator,
+  html_content: string,
+  diffResult: string,
+  ai: GoogleGenAI
+): Promise<{
+  type: string; value: string; confidence: number; reasoning: string;
+  healStatus: HealStatus; verified: boolean;
+}> {
   const htmlChunk = getRelevantHtmlChunk(html_content, locator.context_clue);
   console.log(`[AegisIRT] Healing: ${locator.locator_type} = "${locator.locator_value}" | chunk: ${htmlChunk.length} chars`);
 
-  let attempt = 0, verificationResult = false, screenshotBase64 = "";
+  let attempt = 0;
   let finalLocator = { type: locator.locator_type, value: locator.locator_value, confidence: 0, reasoning: "" };
+  let healStatus: HealStatus = "FAILED";
+  let verified = false;
 
   let aiPrompt = `You are a test automation healing engine for clinical trial IRT systems.
-Fix EXACTLY ONE broken locator. Do not reference other locators.
+Fix EXACTLY ONE broken locator. Ignore all other locators in the code.
 
 BROKEN LOCATOR:
 - Type: ${locator.locator_type}
@@ -159,97 +220,119 @@ BROKEN LOCATOR:
 - Context: ${locator.context_clue}
 - Text hint: ${locator.text_hint}
 
-DOM CHANGES: ${diffResult}
+DOM CHANGES DETECTED:
+${diffResult}
 
-CURRENT HTML:
+CURRENT PAGE HTML (search this carefully for replacements):
 ${htmlChunk}
 
 STRICT RULES:
-1. NEVER return "${locator.locator_value}" — it is broken.
-2. NEVER return mock/placeholder values like [data-testid='mock'].
-3. Every value MUST exist verbatim in the HTML above.
-4. Scan ALL data-testid, data-action, aria-label, name attributes.
-5. Prefer: data-testid > data-action > aria-label > name > class.
-6. Explain: what changed, why you chose this selector, how stable it is.
+1. NEVER return "${locator.locator_value}" — it is confirmed broken and does not exist.
+2. NEVER return mock or placeholder values like [data-testid='mock'].
+3. Every selector value you return MUST exist verbatim as an attribute in the HTML above.
+4. Scan every data-testid, data-action, aria-label, name, and id attribute carefully.
+5. Priority: data-testid > data-action > aria-label > name > id > class.
+6. Explain specifically: what the old locator was, what changed in the DOM, why you chose this new selector, how stable it will be.
 
-Return ONLY valid JSON:
-{"type":"By.CSS_SELECTOR","value":"actual-selector-from-html","confidence":0.95,"reasoning":"explanation"}`;
+Return ONLY this exact JSON format with no extra text:
+{"type":"By.CSS_SELECTOR","value":"[data-testid='example']","confidence":0.95,"reasoning":"detailed explanation here"}`;
 
-  while (attempt < 3 && !verificationResult) {
+  while (attempt < 3 && healStatus === "FAILED") {
     attempt++;
     let responseText = "";
+
     try {
-      if (!process.env.GEMINI_API_KEY) throw new Error("No API key");
+      if (!process.env.GEMINI_API_KEY) throw new Error("No GEMINI_API_KEY set");
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash", contents: aiPrompt,
+        model: "gemini-2.5-flash",
+        contents: aiPrompt,
         config: { responseMimeType: "application/json" }
       });
       responseText = response.text || "";
-      console.log(`[AegisIRT] Attempt ${attempt} response: ${responseText.slice(0, 300)}`);
-    } catch (e) { console.warn(`[AegisIRT] Gemini error attempt ${attempt}:`, e); break; }
+      console.log(`[AegisIRT] Attempt ${attempt} raw: ${responseText.slice(0, 400)}`);
+    } catch (e) {
+      console.warn(`[AegisIRT] Gemini error attempt ${attempt}:`, e);
+      break;
+    }
 
+    // Parse JSON
     let parsed: any;
     try {
       const match = responseText.match(/\{[\s\S]*\}/);
       parsed = JSON.parse(match ? match[0] : responseText);
-    } catch { aiPrompt += `\nAttempt ${attempt}: invalid JSON. Return ONLY a JSON object.`; continue; }
-
-    const suggestedValue: string = parsed.value || "";
-    // Validate value exists in HTML — strip selector syntax to get the raw string
-    const rawValue = suggestedValue.replace(/[\[\]'"=*^$]/g, " ").split(" ").filter(s => s.length > 3).join(" ");
-    const existsInHtml = rawValue.split(" ").some(part => htmlChunk.includes(part));
-
-    if (!suggestedValue || suggestedValue === locator.locator_value || !existsInHtml) {
-      console.warn(`[AegisIRT] Attempt ${attempt}: "${suggestedValue}" rejected — not found in HTML chunk.`);
-      aiPrompt += `\nAttempt ${attempt}: "${suggestedValue}" was rejected — not found in HTML. Pick a DIFFERENT attribute value that IS in the HTML.`;
+    } catch {
+      aiPrompt += `\nAttempt ${attempt}: your response was not valid JSON. Return ONLY a JSON object, nothing else.`;
       continue;
     }
 
-    finalLocator = { type: parsed.type || "By.CSS_SELECTOR", value: suggestedValue, confidence: parseFloat(parsed.confidence) || 0.9, reasoning: parsed.reasoning || "" };
+    const suggestedValue: string = (parsed.value || "").trim();
+    const suggestedType: string = parsed.type || "By.CSS_SELECTOR";
 
-    if (browser) {
-      let page;
-      try {
-        page = await browser.newPage();
-        await page.setContent(html_content, { waitUntil: "load" });
-        const isXPath = finalLocator.type.includes("XPATH");
-        const isFound = await page.evaluate((locValue: string, isXP: boolean) => {
-          try {
-            let el: Element | null = null;
-            if (isXP) { const r = document.evaluate(locValue, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); el = r.singleNodeValue as Element; }
-            else el = document.querySelector(locValue);
-            if (el) { (el as HTMLElement).style.border = "4px solid #ffffff"; (el as HTMLElement).style.backgroundColor = "#1e1e1e"; return true; }
-          } catch {}
-          return false;
-        }, finalLocator.value, isXPath);
+    // Reject if it echoed back the broken locator
+    if (!suggestedValue || suggestedValue === locator.locator_value) {
+      console.warn(`[AegisIRT] Attempt ${attempt}: echoed broken locator. Retrying.`);
+      aiPrompt += `\nAttempt ${attempt}: you returned the original broken locator "${locator.locator_value}". This is wrong. Find something different from the HTML.`;
+      continue;
+    }
 
-        if (isFound) {
-          verificationResult = true;
-          screenshotBase64 = await page.screenshot({ encoding: "base64" }) as string;
-          console.log(`[AegisIRT] VERIFIED: ${finalLocator.value}`);
-        } else {
-          console.warn(`[AegisIRT] Puppeteer FAILED: ${finalLocator.value}`);
-          aiPrompt += `\nAttempt ${attempt}: querySelector for "${finalLocator.value}" returned null. Try XPATH or a different attribute.`;
-        }
-      } catch (e) { console.warn("[AegisIRT] Page error:", e); }
-      finally { if (page) await page.close(); }
-    } else { verificationResult = true; }
+    // HTML text check — extract raw token from selector syntax
+    const selectorTokens = suggestedValue
+      .replace(/[\[\]'"=*^$~|]/g, " ")
+      .split(/\s+/)
+      .filter(t => t.length > 2);
+    const existsInHtml = selectorTokens.some(token => htmlChunk.includes(token));
+
+    if (!existsInHtml) {
+      console.warn(`[AegisIRT] Attempt ${attempt}: "${suggestedValue}" not found in HTML chunk. Retrying.`);
+      aiPrompt += `\nAttempt ${attempt}: "${suggestedValue}" was rejected because none of its tokens exist in the HTML. Look more carefully — pick an attribute value that IS literally present in the HTML I gave you.`;
+      continue;
+    }
+
+    // jsdom verification — the real check
+    const jsdomPassed = verifyWithJsdom(html_content, suggestedValue, suggestedType);
+
+    finalLocator = {
+      type: suggestedType,
+      value: suggestedValue,
+      confidence: parseFloat(parsed.confidence) || 0.9,
+      reasoning: parsed.reasoning || "",
+    };
+
+    if (jsdomPassed) {
+      healStatus = "HEALED";
+      verified = true;
+      console.log(`[AegisIRT] HEALED: "${suggestedValue}"`);
+    } else {
+      // HTML check passed but jsdom failed — use as fallback, don't retry
+      healStatus = "FALLBACK";
+      verified = false;
+      console.warn(`[AegisIRT] FALLBACK: "${suggestedValue}" — HTML check passed but jsdom querySelector returned null`);
+      break;
+    }
   }
 
-  return { ...finalLocator, healed: verificationResult, screenshot: screenshotBase64, verified: verificationResult };
+  return { ...finalLocator, healStatus, verified };
 }
 
+// ── Main POST handler ─────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action } = body;
 
+    // Feedback logging
     if (action === "provide_feedback") {
       const { actual_success, result } = body;
       let logs: any[] = [];
       try { logs = JSON.parse(fs.readFileSync(healingLogPath, "utf-8")); } catch {}
       if (result) {
-        logs.push({ timestamp: new Date().toISOString(), broken_locator: result.original_locator, healed_locator: result.ai_suggestion, actual_success, user_feedback: actual_success ? "approve" : "reject" });
+        logs.push({
+          timestamp: new Date().toISOString(),
+          broken_locator: result.original_locator,
+          healed_locator: result.ai_suggestion,
+          actual_success,
+          user_feedback: actual_success ? "approve" : "reject",
+        });
         try { fs.writeFileSync(healingLogPath, JSON.stringify(logs, null, 2)); } catch {}
       }
       return NextResponse.json({ status: "success", message: "Feedback logged" });
@@ -257,14 +340,18 @@ export async function POST(request: NextRequest) {
 
     if (action === "get_stats") return NextResponse.json({ server_status: "online", model_loaded: true });
 
-    // ── BATCH HEAL ──────────────────────────────────────────────────────────
+    // ── BATCH HEAL ────────────────────────────────────────────────────────────
     if (action === "heal_batch") {
       const { original_code, html_content } = body;
-      if (!original_code || !html_content) return NextResponse.json({ error: "original_code and html_content required" }, { status: 400 });
+      if (!original_code || !html_content) {
+        return NextResponse.json({ error: "original_code and html_content are required" }, { status: 400 });
+      }
 
       const locators = extractAllLocators(original_code);
       console.log(`[AegisIRT] Batch: ${locators.length} locators found`);
-      if (locators.length === 0) return NextResponse.json({ error: "No locators found in pasted code" }, { status: 400 });
+      if (locators.length === 0) {
+        return NextResponse.json({ error: "No locators found in pasted code" }, { status: 400 });
+      }
 
       let snapshot = { html: "" };
       try { snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf-8")); } catch {}
@@ -272,17 +359,19 @@ export async function POST(request: NextRequest) {
       try { fs.writeFileSync(snapshotPath, JSON.stringify({ html: html_content }, null, 2)); } catch {}
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "dummy" });
-      let browser = globalBrowser;
-      try {
-        if (!browser || !browser.connected) { browser = await puppeteer.launch({ headless: true }); globalBrowser = browser; }
-      } catch (e) { console.warn("[AegisIRT] Puppeteer failed:", e); browser = null; }
 
-      const healedMap = new Map<number, { type: string; value: string; healed: boolean }>();
+      const healedMap = new Map<number, { type: string; value: string; status: HealStatus }>();
       const resultCards: any[] = [];
 
       for (const locator of locators) {
-        const healed = await healSingleLocator(locator, html_content, diffResult, ai, browser);
-        healedMap.set(locator.lineIndex, { type: locator.locator_type, value: healed.healed ? healed.value : locator.locator_value, healed: healed.healed });
+        const healed = await healSingleLocator(locator, html_content, diffResult, ai);
+
+        healedMap.set(locator.lineIndex, {
+          type: locator.locator_type,
+          value: healed.healStatus !== "FAILED" ? healed.value : locator.locator_value,
+          status: healed.healStatus,
+        });
+
         resultCards.push({
           id: `healing_${Date.now()}_${locator.lineIndex}`,
           element_name: locator.text_hint || locator.locator_value,
@@ -290,32 +379,46 @@ export async function POST(request: NextRequest) {
           ai_suggestion: { type: healed.type, value: healed.value, confidence: healed.confidence },
           reasoning: healed.reasoning,
           clinical_analysis: { context: locator.context_clue },
-          recommendation: healed.verified ? "VERIFIED_BY_BROWSER" : "UNVERIFIED",
+          recommendation: healed.healStatus,
           timestamp: new Date().toISOString(),
           verifiedResult: healed.verified,
-          status: healed.verified ? "verified" : "pending",
-          screenshot: healed.screenshot,
+          healStatus: healed.healStatus,
+          status: healed.healStatus === "HEALED" ? "verified"
+                : healed.healStatus === "FALLBACK" ? "pending"
+                : "rejected",
+          screenshot: "",
           model_info: { language: locator.detected_language },
-          healed: healed.healed,
+          healed: healed.healStatus !== "FAILED",
         });
       }
 
       const healedFile = reconstructFile(original_code, healedMap);
-      const successCount = resultCards.filter(r => r.healed).length;
-      console.log(`[AegisIRT] Batch done: ${successCount}/${locators.length} healed`);
+      const healedCount   = resultCards.filter(r => r.healStatus === "HEALED").length;
+      const fallbackCount = resultCards.filter(r => r.healStatus === "FALLBACK").length;
+      const failedCount   = resultCards.filter(r => r.healStatus === "FAILED").length;
 
-      return NextResponse.json({ batch: true, total: locators.length, healed_count: successCount, failed_count: locators.length - successCount, healed_file: healedFile, results: resultCards });
+      console.log(`[AegisIRT] Done: ${healedCount} HEALED, ${fallbackCount} FALLBACK, ${failedCount} FAILED`);
+
+      return NextResponse.json({
+        batch: true,
+        total: locators.length,
+        healed_count: healedCount,
+        fallback_count: fallbackCount,
+        failed_count: failedCount,
+        healed_file: healedFile,
+        results: resultCards,
+      });
     }
 
-    // ── SINGLE HEAL (legacy) ────────────────────────────────────────────────
+    // ── SINGLE HEAL (legacy) ──────────────────────────────────────────────────
     if (action === "heal_element") {
       const { element_info, html_content, clinical_context } = body;
+
       let snapshot = { html: "" };
       try { snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf-8")); } catch {}
       const diffResult = domDiff(snapshot.html, html_content);
+
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "dummy" });
-      let browser = globalBrowser;
-      try { if (!browser || !browser.connected) { browser = await puppeteer.launch({ headless: true }); globalBrowser = browser; } } catch {}
 
       const locator: ParsedLocator = {
         lineIndex: 0, originalLine: "",
@@ -326,7 +429,8 @@ export async function POST(request: NextRequest) {
         context_clue: `${element_info.text_hint || ""} ${clinical_context || ""}`,
       };
 
-      const healed = await healSingleLocator(locator, html_content, diffResult, ai, browser);
+      const healed = await healSingleLocator(locator, html_content, diffResult, ai);
+
       return NextResponse.json({
         id: `healing_${Date.now()}`,
         element_name: element_info.text_hint || "Unknown",
@@ -334,16 +438,21 @@ export async function POST(request: NextRequest) {
         ai_suggestion: { type: healed.type, value: healed.value, confidence: healed.confidence },
         reasoning: healed.reasoning,
         clinical_analysis: { context: clinical_context || "general", keywords_found: [] },
-        recommendation: healed.verified ? "VERIFIED_BY_BROWSER" : "UNVERIFIED",
+        recommendation: healed.healStatus,
         timestamp: new Date().toISOString(),
         verifiedResult: healed.verified,
-        status: healed.verified ? "verified" : "pending",
-        screenshot: healed.screenshot,
+        healStatus: healed.healStatus,
+        status: healed.healStatus === "HEALED" ? "verified"
+              : healed.healStatus === "FALLBACK" ? "pending"
+              : "rejected",
+        screenshot: "",
         model_info: { language: element_info.detected_language || "unknown" },
+        healed: healed.healStatus !== "FAILED",
       });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+
   } catch (error: any) {
     console.error("AI Error:", error);
     return NextResponse.json({ error: "AegisIRT AI failed", details: error.message }, { status: 500 });
