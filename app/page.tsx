@@ -20,7 +20,7 @@ interface HealingResult {
   screenshot?: string
   model_info: { language: string }
   verifiedResult?: boolean
-  healed?: boolean
+  healStatus?: "HEALED" | "FALLBACK" | "FAILED"
 }
 
 export default function AegisIRTSelfHealingAI() {
@@ -31,7 +31,7 @@ export default function AegisIRTSelfHealingAI() {
   const [pastedCode, setPastedCode]           = useState("")
   const [htmlContent, setHtmlContent]         = useState("")
   const [healedFile, setHealedFile]           = useState("")
-  const [batchSummary, setBatchSummary]       = useState<{ total: number; healed: number; failed: number } | null>(null)
+  const [batchSummary, setBatchSummary]       = useState<{ total: number; healed: number; fallback: number; failed: number } | null>(null)
   const [copiedId, setCopiedId]               = useState<string | null>(null)
   const [copiedFile, setCopiedFile]           = useState(false)
 
@@ -122,7 +122,7 @@ export default function AegisIRTSelfHealingAI() {
       if (data.batch) {
         setHealingResults(data.results || [])
         setHealedFile(data.healed_file || "")
-        setBatchSummary({ total: data.total, healed: data.healed_count, failed: data.failed_count })
+        setBatchSummary({ total: data.total, healed: data.healed_count, fallback: data.fallback_count ?? 0, failed: data.failed_count })
       } else {
         // Single result (legacy fallback)
         setHealingResults([data])
@@ -208,16 +208,25 @@ export default function AegisIRTSelfHealingAI() {
                 placeholder={"def test_enroll_patient(driver):\n    driver.find_element(By.ID, 'btn_enroll').click()"}
                 className="min-h-[200px] font-mono text-sm bg-[#111] border-[#1e1e1e] text-white focus:border-white focus:ring-1 focus:ring-white transition-all"
               />
-              {/* Detection status */}
-              {detectionStatus && (
-                <p className="text-[#555] text-xs" style={{ fontFamily: '"Open Sans", sans-serif' }}>
-                  Detected: <span className="text-white">{detectionStatus.language}</span>
-                  {" · "}
-                  <span className="text-white">{detectionStatus.locatorCount}</span> locator{detectionStatus.locatorCount !== 1 ? "s" : ""} found
-                  {" · "}
-                  Context: <span className="text-white">{detectionStatus.context}</span>
-                </p>
-              )}
+              {/* Detection status boxes */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2">
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Language</span>
+                  <span className="text-sm font-semibold text-white">{detectionStatus?.language || "—"}</span>
+                </div>
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Locators found</span>
+                  <span className="text-sm font-semibold text-white">{detectionStatus?.locatorCount ?? "—"}</span>
+                </div>
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded truncate">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Context</span>
+                  <span className="text-sm font-semibold text-white truncate" title={detectionStatus?.context}>{detectionStatus?.context || "—"}</span>
+                </div>
+                <div className="bg-[#111] border border-[#1e1e1e] p-2 flex flex-col rounded">
+                  <span className="text-xs text-[#555] uppercase tracking-wider">Status</span>
+                  <span className="text-sm font-semibold text-white">{detectionStatus ? "Auto-detected" : "—"}</span>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -257,23 +266,13 @@ export default function AegisIRTSelfHealingAI() {
         {/* Batch summary */}
         {batchSummary && (
           <div className="bg-[#0e0e0e] border border-[#1e1e1e] rounded-lg p-4 flex items-center gap-6">
-            <div className="text-center">
-              <p className="text-[#555] text-xs uppercase tracking-wider">Total</p>
-              <p className="text-white text-2xl font-bold">{batchSummary.total}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[#555] text-xs uppercase tracking-wider">Healed</p>
-              <p className="text-white text-2xl font-bold">{batchSummary.healed}</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[#555] text-xs uppercase tracking-wider">Failed</p>
-              <p className="text-[#555] text-2xl font-bold">{batchSummary.failed}</p>
-            </div>
+            <div className="text-center"><p className="text-[#555] text-xs uppercase tracking-wider">Total</p><p className="text-white text-2xl font-bold">{batchSummary.total}</p></div>
+            <div className="text-center"><p className="text-[#555] text-xs uppercase tracking-wider">Healed</p><p className="text-white text-2xl font-bold">{batchSummary.healed}</p></div>
+            <div className="text-center"><p className="text-[#555] text-xs uppercase tracking-wider">Fallback</p><p className="text-[#888] text-2xl font-bold">{batchSummary.fallback}</p></div>
+            <div className="text-center"><p className="text-[#555] text-xs uppercase tracking-wider">Failed</p><p className="text-[#444] text-2xl font-bold">{batchSummary.failed}</p></div>
             <div className="flex-1 ml-4">
-              <Progress value={(batchSummary.healed / batchSummary.total) * 100} className="h-1 bg-[#111]">
-                <div className="h-full bg-white transition-all" style={{ width: `${(batchSummary.healed / batchSummary.total) * 100}%` }} />
-              </Progress>
-              <p className="text-[#555] text-xs mt-1">{Math.round((batchSummary.healed / batchSummary.total) * 100)}% success rate</p>
+              <Progress value={((batchSummary.healed + batchSummary.fallback) / batchSummary.total) * 100} className="h-1 bg-[#111]"><div className="h-full bg-white transition-all" style={{ width: `${((batchSummary.healed + batchSummary.fallback) / batchSummary.total) * 100}%` }} /></Progress>
+              <p className="text-[#555] text-xs mt-1">{batchSummary.healed} jsdom verified � {batchSummary.fallback} fallback � {batchSummary.failed} failed</p>
             </div>
           </div>
         )}
@@ -320,14 +319,19 @@ export default function AegisIRTSelfHealingAI() {
                         : <AlertCircle className="h-4 w-4 text-[#555]" />}
                       {result.element_name}
                     </CardTitle>
-                    {result.verifiedResult && (
+                    {result.healStatus === "HEALED" && (
                       <div className="flex items-center gap-2 bg-[#111] border border-white px-3 py-1 text-xs uppercase tracking-widest font-bold">
-                        <BadgeCheck className="w-4 h-4 text-white" /> Browser Verified
+                        <BadgeCheck className="w-4 h-4 text-white" /> Healed
                       </div>
                     )}
-                    {result.healed === false && (
-                      <div className="flex items-center gap-2 bg-[#111] border border-[#333] px-3 py-1 text-xs uppercase tracking-widest font-bold text-[#555]">
-                        Could Not Heal
+                    {result.healStatus === "FALLBACK" && (
+                      <div className="flex items-center gap-2 bg-[#111] border border-[#555] px-3 py-1 text-xs uppercase tracking-widest font-bold text-[#888]">
+                        <AlertCircle className="w-4 h-4 text-[#888]" /> Fallback Used
+                      </div>
+                    )}
+                    {result.healStatus === "FAILED" && (
+                      <div className="flex items-center gap-2 bg-[#111] border border-[#333] px-3 py-1 text-xs uppercase tracking-widest font-bold text-[#444]">
+                        <XCircle className="w-4 h-4 text-[#444]" /> Failed
                       </div>
                     )}
                   </div>
